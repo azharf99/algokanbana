@@ -279,7 +279,7 @@ func gzipMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Add("Vary", "Accept-Encoding")
 		gw, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
-		defer gw.Close()
+		defer func() { _ = gw.Close() }()
 		next.ServeHTTP(&gzipResponseWriter{Writer: gw, ResponseWriter: w}, r)
 	})
 }
@@ -295,7 +295,7 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 }
 
 func decodeJSON(r *http.Request, dst any) error {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	dec := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
 	return dec.Decode(dst)
 }

@@ -84,7 +84,7 @@ func (c *Client) VerifyCredentials(ctx context.Context, login, password string) 
 	if err != nil {
 		return UserProfile{}, err
 	}
-	defer resp1.Body.Close()
+	defer func() { _ = resp1.Body.Close() }()
 
 	var existsResp struct {
 		Status string `json:"status"`
@@ -106,7 +106,7 @@ func (c *Client) VerifyCredentials(ctx context.Context, login, password string) 
 	if err != nil {
 		return UserProfile{}, err
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode >= 400 {
 		return UserProfile{}, fmt.Errorf("LMS authentication rejected with HTTP %d", resp2.StatusCode)
 	}
@@ -121,4 +121,39 @@ func (c *Client) VerifyCredentials(ctx context.Context, login, password string) 
 		FullName:  fullName,
 		EmailMask: existsResp.Data.Email,
 	}, nil
+}
+
+type RawLMSGroup struct {
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	Type      string `json:"type"`   // "intensive" | "regular"
+	Status    string `json:"status"` // "active" | "inactive" | "destroyed"
+	StartTime string `json:"startTime"`
+}
+
+func (c *Client) FetchTutorGroups(ctx context.Context) ([]RawLMSGroup, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v2/group/index?per-page=100", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("LMS fetch groups failed with HTTP %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Status string `json:"status"`
+		Data   struct {
+			Items []RawLMSGroup `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return res.Data.Items, nil
 }

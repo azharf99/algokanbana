@@ -29,7 +29,7 @@
   const navItems: { key: RouteKey; label: string; icon: string }[] = [
     { key: 'taskboard', label: 'Papan Tugas', icon: '📋' },
     { key: 'dashboard', label: 'Dasbor & KPI', icon: '📊' },
-    { key: 'students', label: 'Siswa (55)', icon: '🎓' },
+    { key: 'students', label: 'Daftar Siswa', icon: '🎓' },
     { key: 'regular-feedback', label: 'Regular Feedback', icon: '📝' },
     { key: 'schedule', label: 'Jadwal & Reschedule', icon: '🗓️' },
     { key: 'assessment', label: 'Assessment', icon: '🏆' },
@@ -66,7 +66,7 @@
     await refreshBootstrap();
     if (role === 'team_lead') {
       navigate('tl-demo');
-      notify('Beralih ke Mode Demo Team Lead (Devika Wulan Rahmadani)', 'info');
+      notify('Beralih ke Mode Team Lead', 'info');
     } else {
       navigate('dashboard');
       notify('Kembali ke Mode Tutor Pengajar', 'info');
@@ -150,25 +150,6 @@
               {/if}
             </button>
           {/each}
-
-          <div class="pt-3 mt-3 border-t border-slate-800 space-y-1">
-            <div class="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Mode Presentasi Pimpinan</div>
-            <button
-              onclick={() => navigate('tl-demo')}
-              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer {app.route === 'tl-demo' ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300' : 'text-amber-300/80 hover:bg-slate-800'}"
-            >
-              <span>👩‍💼 Meja Team Lead Demo</span>
-              {#if app.badges.tlUnread > 0}
-                <span class="px-1.5 rounded-full text-[10px] bg-amber-400 text-slate-950 font-black">{app.badges.tlUnread}</span>
-              {/if}
-            </button>
-            <button
-              onclick={() => navigate('benchmark')}
-              class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition cursor-pointer {app.route === 'benchmark' ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300' : 'text-emerald-400/90 hover:bg-slate-800'}"
-            >
-              <span>⚡ Benchmark vs Aplikasi Lama</span>
-            </button>
-          </div>
         </nav>
 
         <!-- Jadwal Minggu Ini Mini-Rail -->
@@ -192,6 +173,11 @@
                 </div>
               </div>
             {/each}
+            {#if (app.upcomingLessons || []).length === 0}
+              <div class="p-3 text-center text-[11px] text-slate-500 bg-slate-900/60 rounded-xl">
+                Belum ada jadwal kelas terdekat.
+              </div>
+            {/if}
           </div>
         </div>
       </div>
@@ -199,8 +185,8 @@
       <!-- Footer User -->
       <div class="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
         <div class="truncate pr-2">
-          <div class="font-bold text-white truncate">{app.tutor?.fullName || 'Azhar Faturohman'}</div>
-          <div class="text-[11px] text-slate-500">LMS #{app.tutor?.lmsUserId}</div>
+          <div class="font-bold text-white truncate">{app.tutor?.fullName || 'Tutor Algonova'}</div>
+          <div class="text-[11px] text-slate-500">{app.tutor?.lmsUserId ? `LMS #${app.tutor.lmsUserId}` : 'Tutor Portal'}</div>
         </div>
         <button onclick={handleLogout} class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-600/30 text-slate-300 hover:text-rose-300 cursor-pointer">
           Keluar
@@ -228,29 +214,9 @@
 
         <div class="flex items-center gap-2.5 text-xs">
           <!-- Live Server Speed Pill -->
-          <button
-            onclick={() => navigate('benchmark')}
-            title="Klik untuk melihat detail perbandingan performa"
-            class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-mono text-[11px] cursor-pointer"
-          >
+          <div class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-mono text-[11px]">
             <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             Go API: {app.telemetry.serverMs.toFixed(2)} ms
-          </button>
-
-          <!-- Role Switcher -->
-          <div class="inline-flex rounded-xl bg-slate-950 border border-slate-800 p-0.5">
-            <button
-              onclick={() => switchRole('tutor')}
-              class="px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer {app.session?.activeRole !== 'team_lead' ? 'bg-indigo-600 text-white' : 'text-slate-400'}"
-            >
-              Tutor
-            </button>
-            <button
-              onclick={() => switchRole('team_lead')}
-              class="px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer {app.session?.activeRole === 'team_lead' ? 'bg-amber-500 text-slate-950' : 'text-slate-400'}"
-            >
-              TL Demo
-            </button>
           </div>
 
           <button onclick={triggerManualSync} title="Sinkronisasi data" class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer">
@@ -273,8 +239,6 @@
               {item.icon} {item.label}
             </button>
           {/each}
-          <button onclick={() => { mobileNavOpen = false; navigate('tl-demo'); }} class="p-2 rounded-lg text-left bg-slate-950 text-amber-300">👩‍💼 Team Lead Demo</button>
-          <button onclick={() => { mobileNavOpen = false; navigate('benchmark'); }} class="p-2 rounded-lg text-left bg-slate-950 text-emerald-300">⚡ Benchmark</button>
         </div>
       {/if}
 

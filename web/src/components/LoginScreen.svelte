@@ -1,24 +1,28 @@
 <script lang="ts">
   import { apiFetch, connectSSE, notify, refreshBootstrap } from '../lib/state.svelte';
 
-  let login = $state('azharfa');
-  let password = $state('Azhar1995!');
-  let verifyLms = $state(false);
+  let login = $state('');
+  let password = $state('');
+  let verifyLms = $state(true);
   let loading = $state(false);
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
+    if (!login.trim() || !password.trim()) {
+      notify('Username dan password LMS wajib diisi', 'error');
+      return;
+    }
     loading = true;
     try {
       await apiFetch('/api/v1/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ login, password, verifyLms }),
+        body: JSON.stringify({ login: login.trim(), password, verifyLms }),
       });
       await refreshBootstrap();
       connectSSE();
       notify('Berhasil masuk ke AlgoKanbana!', 'success');
     } catch (err: any) {
-      notify(err.message || 'Gagal login', 'error');
+      notify(err.message || 'Gagal login, periksa kembali username dan password LMS', 'error');
     } finally {
       loading = false;
     }
@@ -34,30 +38,30 @@
         </div>
         <div>
           <h1 class="text-lg font-bold text-white tracking-tight">AlgoKanbana</h1>
-          <p class="text-xs text-slate-400">Algonova Indonesia • Ultra-Fast Tutor Portal</p>
+          <p class="text-xs text-slate-400">Portal Pengajaran Tutor • Algonova Indonesia</p>
         </div>
       </div>
-      <span class="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-        Go Single-Binary
+      <span class="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+        Tutor Portal
       </span>
     </div>
 
     <div class="mb-5 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 space-y-1">
-      <div class="font-semibold text-indigo-400">Mode Aman Lokal Aktif (Zero Critical POST)</div>
+      <div class="font-semibold text-slate-200">Autentikasi Akun LMS Algonova</div>
       <p class="text-slate-400 leading-relaxed">
-        Seluruh perubahan data disimpan di SQLite WAL lokal (<code class="text-emerald-400">&lt; 1 ms</code>) tanpa menyentuh endpoint mutasi produksi Algonova.
+        Gunakan username dan password yang sama dengan akun <code class="text-indigo-300">lms.algonova.id</code> Anda untuk mengakses seluruh jadwal, siswa, dan tugas.
       </p>
     </div>
 
     <form onsubmit={handleSubmit} class="space-y-4">
       <div>
-        <label for="ak-login" class="block text-xs font-medium text-slate-300 mb-1.5">Username Akun LMS</label>
+        <label for="ak-login" class="block text-xs font-medium text-slate-300 mb-1.5">Username LMS</label>
         <input
           id="ak-login"
           bind:value={login}
           required
-          class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-indigo-500"
-          placeholder="azharfa"
+          class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-indigo-500 placeholder-slate-600"
+          placeholder="Masukkan username LMS Anda..."
         />
       </div>
 
@@ -68,37 +72,22 @@
           type="password"
           bind:value={password}
           required
-          class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-indigo-500"
+          class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-indigo-500 placeholder-slate-600"
+          placeholder="Masukkan password akun LMS..."
         />
       </div>
-
-      <label class="flex items-start gap-2.5 text-xs text-slate-400 cursor-pointer select-none pt-1">
-        <input type="checkbox" bind:checked={verifyLms} class="mt-0.5 rounded border-slate-700 bg-slate-950 text-indigo-600" />
-        <span>Verifikasi kredensial langsung ke <code class="text-slate-300">lms.algonova.id</code> (Read-Only Auth)</span>
-      </label>
 
       <button
         type="submit"
         disabled={loading}
         class="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm transition cursor-pointer shadow-lg shadow-indigo-600/25"
       >
-        {loading ? 'Memproses Sesi...' : 'Masuk Instan ke Portal Tutor ⚡'}
+        {loading ? 'Memverifikasi Akun...' : 'Masuk ke Portal Tutor'}
       </button>
     </form>
 
-    <div class="mt-6 pt-4 border-t border-slate-800/80 grid grid-cols-3 gap-2 text-center text-[11px]">
-      <div class="p-2 rounded-lg bg-slate-950/60">
-        <div class="text-emerald-400 font-bold">&lt; 5 ms</div>
-        <div class="text-slate-500">Respon API</div>
-      </div>
-      <div class="p-2 rounded-lg bg-slate-950/60">
-        <div class="text-indigo-400 font-bold">~18 MB</div>
-        <div class="text-slate-500">Docker Image</div>
-      </div>
-      <div class="p-2 rounded-lg bg-slate-950/60">
-        <div class="text-amber-400 font-bold">+03 &rarr; WIB</div>
-        <div class="text-slate-500">Auto Timezone</div>
-      </div>
+    <div class="mt-6 pt-4 border-t border-slate-800/80 text-center text-[11px] text-slate-500">
+      Algonova Indonesia &bull; High-Performance Tutor Daily Driver
     </div>
   </div>
 </div>

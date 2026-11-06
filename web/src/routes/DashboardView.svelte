@@ -70,7 +70,7 @@
         }),
       });
       reportOpen = false;
-      notify('Laporan berhasil dikirim ke Team Lead (Devika Wulan Rahmadani)!', 'success');
+      notify(`Laporan berhasil dikirim ke Team Lead (${app.tutor?.tlName || 'Team Lead'})!`, 'success');
     } catch (err: any) {
       notify(err.message, 'error');
     } finally {
@@ -119,7 +119,7 @@
           onclick={() => (activeTab = 'groups')}
           class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer {activeTab === 'groups' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}"
         >
-          Grup Kelas ({dashData?.summary?.activeGroupsCount ?? 27})
+          Grup Kelas ({dashData?.summary?.activeGroupsCount ?? 0})
         </button>
         <button
           onclick={() => (activeTab = 'kpi')}
@@ -237,6 +237,14 @@
                 </td>
               </tr>
             {/each}
+
+            {#if filteredGroups.length === 0}
+              <tr>
+                <td colspan="6" class="py-10 text-center text-xs text-slate-500">
+                  Belum ada grup kelas aktif terdaftar.
+                </td>
+              </tr>
+            {/if}
           </tbody>
         </table>
       </div>

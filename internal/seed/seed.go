@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"algokanbana/internal/config"
 	"algokanbana/internal/curriculum"
 	"algokanbana/internal/store"
 	"algokanbana/internal/timeutil"
@@ -19,7 +20,12 @@ const (
 	DefaultTLID    = "43dc3434-5324-4067-b928-a447d022a5bf"
 )
 
-func EnsureSeeded(ctx context.Context, st *store.Store) error {
+func EnsureSeeded(ctx context.Context, st *store.Store, mode config.AppMode) error {
+	if mode == config.ModeProduction {
+		// In production, never insert mock/dummy tutors or mock classes!
+		return ensureStandardKBArticles(ctx, st)
+	}
+
 	empty, err := st.IsEmpty(ctx)
 	if err != nil {
 		return err
@@ -30,6 +36,73 @@ func EnsureSeeded(ctx context.Context, st *store.Store) error {
 		}
 	}
 	return ensureSurveyTargetsSeeded(ctx, st)
+}
+
+func CleanAllSeededData(ctx context.Context, st *store.Store) error {
+	tables := []string{
+		"tutors", "groups", "students", "lessons", "lesson_students",
+		"tasks", "urgent_sub_requests", "regular_feedback_reports", "mt_feedback_entries",
+		"reschedule_requests", "workload_requests", "tl_reports", "assessment_submissions",
+		"threads", "messages", "saved_views", "portal_events", "survey_targets", "survey_submissions",
+	}
+	tx, err := st.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, tbl := range tables {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", tbl)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func ensureStandardKBArticles(ctx context.Context, st *store.Store) error {
+	var count int
+	if err := st.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM kb_articles").Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	kbSeed := []store.KBArticle{
+		{
+			ArticleID: "kb-reschedule-private", Category: "Jadwal & Reschedule", Locale: "id",
+			Title: "SOP Perubahan Jadwal (Reschedule) Kelas Private 1-on-1 & Grup",
+			Summary: "Aturan batas pengajuan Senin 23:59 WIB, perbedaan Sekali (OTR) vs Permanen, dan syarat bukti persetujuan orang tua.",
+			ContentMD: "### Ketentuan Reschedule Kelas\n1. **Sekali (One-Time Reschedule / OTR)**: Digunakan apabila murid *private/intensive* berhalangan hadir pada 1 pertemuan tertentu dan sepakat mengganti di hari/jam lain.\n2. **Permanen (`permanent`)**: Mengubah jadwal rutin mingguan untuk seterusnya (hanya berlaku untuk pertemuan mendatang dan minimal tersisa 2 sesi).\n3. **Batas Waktu Grace Period**: Sesi pekan lalu masih dapat diajukan maksimal hingga **hari Senin pukul 23:59 WIB**.\n4. **Bukti Konfirmasi**: Lampirkan 1–3 tangkapan layar persetujuan orang tua/CS.",
+			HelpfulCount: 42,
+		},
+		{
+			ArticleID: "kb-regular-feedback", Category: "Regular Feedback", Locale: "id",
+			Title: "Panduan Penulisan Regular Feedback Pertemuan #4, #8, #12, dst.",
+			Summary: "Standar kualitas umpan balik orang tua setiap 4 pertemuan beserta ekspor kartu PDF A4 & pengiriman WhatsApp.",
+			ContentMD: "### Standar Regular Feedback Coding & Design\n- Wajib diselesaikan setiap kelipatan pertemuan ke-4 paling lambat **Minggu pukul 23:59 WIB**.\n- Pilih kode kursus dan bulan berjalan agar topik modul sesuai kurikulum.\n- Sertakan minimal satu capaian spesifik siswa dan tautan proyek (Scratch/Roblox/GitHub/Figma) bila tersedia.",
+			HelpfulCount: 38,
+		},
+		{
+			ArticleID: "kb-urgent-sub", Category: "Operasional Kelas", Locale: "id",
+			Title: "Ketentuan Pengajuan Guru Pengganti Mendesak (Urgent Sub)",
+			Summary: "Prosedur pengajuan guru pengganti dalam jendela 50 menit s/d 72 jam ke depan akibat kendala darurat.",
+			ContentMD: "### Pengajuan Urgent Sub\n- Berlaku jika tutor mengalami kendala mendesak (sakit mendadak, pemadaman listrik/koneksi internet, musibah).\n- Wajib melampirkan minimal 1 bukti foto/surat pendukung.\n- Status pengajuan dapat dipantau langsung di Papan Tugas dan ditarik kembali jika kendala teratasi sebelum kelas dimulai.",
+			HelpfulCount: 29,
+		},
+		{
+			ArticleID: "kb-tl-report", Category: "Komunikasi & Eskalasi", Locale: "id",
+			Title: "Kapan Harus Mengirimkan Laporan ke Team Lead?",
+			Summary: "Kriteria pengiriman laporan siswa mangkir 2x berturut-turut, kendala pedagogi, maupun eskalasi perpanjangan.",
+			ContentMD: "### Kriteria Laporan ke Team Lead\n1. Siswa izin atau mangkir 2 kali berturut-turut tanpa kabar jelas.\n2. Siswa mengalami kesulitan pemahaman materi tingkat lanjut yang memerlukan penyesuaian kurikulum.\n3. Masukan khusus dari orang tua yang membutuhkan tindak lanjut tim Customer Support.",
+			HelpfulCount: 35,
+		},
+	}
+	for _, a := range kbSeed {
+		_, _ = st.DB().ExecContext(ctx, `INSERT OR IGNORE INTO kb_articles (article_id, category, locale, title, summary, content_md, helpful_count) VALUES (?,?,?,?,?,?,?)`,
+			a.ArticleID, a.Category, a.Locale, a.Title, a.Summary, a.ContentMD, a.HelpfulCount)
+	}
+	return nil
 }
 
 func ensureSurveyTargetsSeeded(ctx context.Context, st *store.Store) error {

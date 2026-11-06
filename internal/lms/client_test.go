@@ -23,18 +23,30 @@ func TestSafeReadonlyTransportBlocksMutations(t *testing.T) {
 
 	// Critical POST to LMS or NanoKanbana MUST fail immediately
 	reqBlocked, _ := http.NewRequest(http.MethodPost, "https://lms.algonova.id/api/v2/schedule/reschedule", strings.NewReader(`{}`))
-	if _, err := tr.RoundTrip(reqBlocked); !errors.Is(err, ErrMutatingUpstreamBlocked) {
+	respBlocked, err := tr.RoundTrip(reqBlocked)
+	if respBlocked != nil && respBlocked.Body != nil {
+		_ = respBlocked.Body.Close()
+	}
+	if !errors.Is(err, ErrMutatingUpstreamBlocked) {
 		t.Fatalf("expected critical POST to be blocked, got err=%v", err)
 	}
 
 	reqNKBlocked, _ := http.NewRequest(http.MethodPost, "https://nano-kanbana.vercel.app/id/portal/tutor/taskboard", strings.NewReader(`[]`))
-	if _, err := tr.RoundTrip(reqNKBlocked); !errors.Is(err, ErrMutatingUpstreamBlocked) {
+	respNKBlocked, err := tr.RoundTrip(reqNKBlocked)
+	if respNKBlocked != nil && respNKBlocked.Body != nil {
+		_ = respNKBlocked.Body.Close()
+	}
+	if !errors.Is(err, ErrMutatingUpstreamBlocked) {
 		t.Fatalf("expected Server Action POST to NanoKanbana to be blocked, got err=%v", err)
 	}
 
 	// Read-only GET MUST pass
 	reqGet, _ := http.NewRequest(http.MethodGet, "https://lms.algonova.id/api/v2/group/index", nil)
-	if _, err := tr.RoundTrip(reqGet); err != nil {
+	respGet, err := tr.RoundTrip(reqGet)
+	if err != nil {
 		t.Fatalf("expected GET to be allowed, got err=%v", err)
+	}
+	if respGet != nil && respGet.Body != nil {
+		_ = respGet.Body.Close()
 	}
 }

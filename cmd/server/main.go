@@ -25,13 +25,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("gagal membuka database SQLite (%s): %v", cfg.DBPath, err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := seed.EnsureSeeded(ctx, st); err != nil {
-		log.Fatalf("gagal menginisialisasi data awal: %v", err)
+	if err := seed.EnsureSeeded(ctx, st, cfg.AppMode); err != nil {
+		log.Printf("gagal menginisialisasi data awal: %v", err)
+		return
 	}
 
 	srv := api.NewServer(cfg, st, algokanbana.WebDistFS())

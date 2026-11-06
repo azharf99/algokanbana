@@ -73,7 +73,7 @@
 <div class="space-y-5">
   <div>
     <h2 class="text-xl font-bold text-white">Tutor Assessment & Riwayat Kompetensi</h2>
-    <p class="text-xs text-slate-400">Penyimpanan draf otomatis di browser & rekapitulasi 37 siklus penilaian historis.</p>
+    <p class="text-xs text-slate-400">Penyimpanan draf otomatis di browser & grafik riwayat kompetensi penilaian.</p>
   </div>
 
   <!-- Active Cycle Card -->

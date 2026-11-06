@@ -70,7 +70,7 @@
   <div class="p-4 rounded-2xl bg-indigo-600/15 border border-indigo-500/30 flex items-center justify-between">
     <div>
       <div class="text-[11px] font-bold uppercase text-indigo-300">Team Lead Anda</div>
-      <div class="text-base font-bold text-white">{app.tutor?.tlName || 'Devika Wulan Rahmadani'}</div>
+      <div class="text-base font-bold text-white">{app.tutor?.tlName || 'Belum ditugaskan'}</div>
     </div>
     <span class="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">
       Status: {app.tutor?.status || 'active'} ({app.tutor?.employmentType || 'part_time'})

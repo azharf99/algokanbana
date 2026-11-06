@@ -142,6 +142,82 @@ func (s *Store) GetTutorByID(ctx context.Context, tutorID string) (Tutor, error)
 	return scanTutor(row)
 }
 
+func (s *Store) UpsertTutor(ctx context.Context, t Tutor) error {
+	tgInt := 0
+	if t.TelegramEnabled {
+		tgInt = 1
+	}
+	now := timeutil.FormatWIB(time.Now())
+	if t.UpdatedAt == "" {
+		t.UpdatedAt = now
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO tutors (
+			tutor_id, user_id, lms_user_id, login, first_name, last_name, email, phone, bio,
+			photo_url, cv_url, specialization_tags_json, subject_tags_json, employment_type, status,
+			country_code, course_types_json, lesson_formats_json, tl_id, tl_name,
+			telegram_handle, telegram_enabled, telegram_link_code, density_pref, locale_pref,
+			available_roles_json, updated_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(login) DO UPDATE SET
+			lms_user_id = excluded.lms_user_id,
+			first_name = CASE WHEN tutors.first_name = '' THEN excluded.first_name ELSE tutors.first_name END,
+			email = CASE WHEN excluded.email != '' THEN excluded.email ELSE tutors.email END,
+			status = excluded.status,
+			updated_at = excluded.updated_at`,
+		t.TutorID, t.UserID, t.LMSUserID, t.Login, t.FirstName, t.LastName, t.Email, t.Phone, t.Bio,
+		t.PhotoURL, t.CVURL, toJSON(t.SpecializationTags), toJSON(t.SubjectTags), t.EmploymentType, t.Status,
+		t.CountryCode, toJSON(t.CourseTypes), toJSON(t.LessonFormats), t.TLID, t.TLName,
+		t.TelegramHandle, tgInt, t.TelegramLinkCode, t.DensityPref, t.LocalePref,
+		toJSON(t.AvailableRoles), t.UpdatedAt,
+	)
+	return err
+}
+
+func (s *Store) SyncTutorGroups(ctx context.Context, tutorID string, groups []Group) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO groups (
+			group_id, tutor_id, title, course_code, course_name, format,
+			schedule_summary, start_date, students_count, avg_attendance_pct,
+			avg_progress_pct, lms_url, is_archived
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(group_id) DO UPDATE SET
+			tutor_id = excluded.tutor_id,
+			title = excluded.title,
+			course_code = excluded.course_code,
+			course_name = excluded.course_name,
+			format = excluded.format,
+			schedule_summary = excluded.schedule_summary,
+			start_date = excluded.start_date,
+			lms_url = excluded.lms_url,
+			is_archived = excluded.is_archived`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, g := range groups {
+		isArch := 0
+		if g.IsArchived {
+			isArch = 1
+		}
+		if _, err := stmt.ExecContext(ctx,
+			g.GroupID, tutorID, g.Title, g.CourseCode, g.CourseName, g.Format,
+			g.ScheduleSummary, g.StartDate, g.StudentsCount, g.AvgAttendancePct,
+			g.AvgProgressPct, g.LMSURL, isArch,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 type UpdateProfileInput struct {
 	FirstName          *string  `json:"firstName"`
 	LastName           *string  `json:"lastName"`
@@ -252,7 +328,7 @@ func (s *Store) ListUpcomingLessons(ctx context.Context, tutorID string, limit i
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Lesson{}
 	for rows.Next() {
 		var l Lesson
@@ -267,6 +343,9 @@ func (s *Store) ListUpcomingLessons(ctx context.Context, tutorID string, limit i
 		l.IsCompleted = done == 1
 		out = append(out, l)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -275,7 +354,7 @@ func (s *Store) ListPortalEvents(ctx context.Context) ([]PortalEvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []PortalEvent{}
 	for rows.Next() {
 		var e PortalEvent
@@ -283,6 +362,9 @@ func (s *Store) ListPortalEvents(ctx context.Context) ([]PortalEvent, error) {
 			return nil, err
 		}
 		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -292,7 +374,7 @@ func (s *Store) ListSavedViews(ctx context.Context, tutorID string) ([]SavedView
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []SavedView{}
 	for rows.Next() {
 		var v SavedView
@@ -300,6 +382,9 @@ func (s *Store) ListSavedViews(ctx context.Context, tutorID string) ([]SavedView
 			return nil, err
 		}
 		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -343,7 +428,7 @@ func (s *Store) SearchPalette(ctx context.Context, tutorID, query string) (map[s
 		FROM students WHERE tutor_id = ? AND (LOWER(full_name) LIKE ? OR LOWER(group_title) LIKE ? OR student_id LIKE ?) LIMIT 8`,
 		tutorID, q, q, q)
 	if err == nil {
-		defer sRows.Close()
+		defer func() { _ = sRows.Close() }()
 		for sRows.Next() {
 			var st Student
 			if err := sRows.Scan(&st.StudentID, &st.TutorID, &st.FullName, &st.GroupID, &st.GroupTitle, &st.GroupFormat, &st.CourseCode, &st.CourseName,
@@ -352,6 +437,7 @@ func (s *Store) SearchPalette(ctx context.Context, tutorID, query string) (map[s
 				students = append(students, st)
 			}
 		}
+		_ = sRows.Err()
 	}
 
 	groups := []Group{}
@@ -361,7 +447,7 @@ func (s *Store) SearchPalette(ctx context.Context, tutorID, query string) (map[s
 		FROM groups WHERE tutor_id = ? AND (LOWER(title) LIKE ? OR group_id LIKE ? OR LOWER(course_name) LIKE ?) LIMIT 8`,
 		tutorID, q, q, q)
 	if err == nil {
-		defer gRows.Close()
+		defer func() { _ = gRows.Close() }()
 		for gRows.Next() {
 			var g Group
 			var arch int
@@ -371,6 +457,7 @@ func (s *Store) SearchPalette(ctx context.Context, tutorID, query string) (map[s
 				groups = append(groups, g)
 			}
 		}
+		_ = gRows.Err()
 	}
 
 	tasks := []Task{}
@@ -379,13 +466,14 @@ func (s *Store) SearchPalette(ctx context.Context, tutorID, query string) (map[s
 		FROM tasks WHERE tutor_id = ? AND (LOWER(title) LIKE ? OR LOWER(related_student_name) LIKE ?) LIMIT 6`,
 		tutorID, q, q)
 	if err == nil {
-		defer tRows.Close()
+		defer func() { _ = tRows.Close() }()
 		for tRows.Next() {
 			var tk Task
 			if err := tRows.Scan(&tk.TaskID, &tk.TutorID, &tk.Title, &tk.Description, &tk.TaskType, &tk.Status, &tk.Priority, &tk.DueAt, &tk.AssignedAt, &tk.CompletedAt, &tk.ReasonNote, &tk.MetricCode, &tk.WeekStart, &tk.RelatedGroupID, &tk.RelatedGroupTitle, &tk.RelatedStudentID, &tk.RelatedStudentName, &tk.ThreadID); err == nil {
 				tasks = append(tasks, tk)
 			}
 		}
+		_ = tRows.Err()
 	}
 
 	return map[string]any{
@@ -403,7 +491,7 @@ func (s *Store) GetDashboardGroups(ctx context.Context, tutorID string) (map[str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	active := []Group{}
 	archived := []Group{}
@@ -424,6 +512,9 @@ func (s *Store) GetDashboardGroups(ctx context.Context, tutorID string) (map[str
 			totalStudents += g.StudentsCount
 			attSum += g.AvgAttendancePct
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	avgAtt := 0
 	if len(active) > 0 {
@@ -463,7 +554,7 @@ func (s *Store) GetGroupDetail(ctx context.Context, tutorID, groupID string) (ma
 	if err != nil {
 		return nil, err
 	}
-	defer sRows.Close()
+	defer func() { _ = sRows.Close() }()
 	students := []Student{}
 	for sRows.Next() {
 		var st Student
@@ -474,6 +565,9 @@ func (s *Store) GetGroupDetail(ctx context.Context, tutorID, groupID string) (ma
 		}
 		students = append(students, st)
 	}
+	if err := sRows.Err(); err != nil {
+		return nil, err
+	}
 
 	lRows, err := s.db.QueryContext(ctx, `
 		SELECT lesson_id, tutor_id, group_id, group_title, course_code, format, lesson_title,
@@ -483,7 +577,7 @@ func (s *Store) GetGroupDetail(ctx context.Context, tutorID, groupID string) (ma
 	if err != nil {
 		return nil, err
 	}
-	defer lRows.Close()
+	defer func() { _ = lRows.Close() }()
 	lessons := []Lesson{}
 	for lRows.Next() {
 		var l Lesson
@@ -494,6 +588,9 @@ func (s *Store) GetGroupDetail(ctx context.Context, tutorID, groupID string) (ma
 			l.IsCompleted = done == 1
 			lessons = append(lessons, l)
 		}
+	}
+	if err := lRows.Err(); err != nil {
+		return nil, err
 	}
 
 	return map[string]any{
@@ -553,7 +650,7 @@ func (s *Store) ListStudents(ctx context.Context, tutorID string) ([]Student, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Student{}
 	for rows.Next() {
 		var st Student
@@ -563,6 +660,9 @@ func (s *Store) ListStudents(ctx context.Context, tutorID string) ([]Student, er
 			return nil, err
 		}
 		out = append(out, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -588,7 +688,7 @@ func (s *Store) GetStudentDetail(ctx context.Context, tutorID, studentID string)
 		       custom1, custom2, stars, project_url, assembled_text, updated_at
 		FROM regular_feedback_reports WHERE tutor_id = ? AND lms_student_id = ? ORDER BY updated_at DESC`, tutorID, studentID)
 	if err == nil {
-		defer rRows.Close()
+		defer func() { _ = rRows.Close() }()
 		for rRows.Next() {
 			var rp RegularFeedbackReport
 			if err := rRows.Scan(&rp.ReportID, &rp.TutorID, &rp.WeekStart, &rp.LMSLessonID, &rp.LMSStudentID, &rp.StudentName, &rp.ParentPhone,
@@ -597,6 +697,7 @@ func (s *Store) GetStudentDetail(ctx context.Context, tutorID, studentID string)
 				reports = append(reports, rp)
 			}
 		}
+		_ = rRows.Err()
 	}
 
 	return map[string]any{
@@ -630,7 +731,7 @@ func (s *Store) ListTLReports(ctx context.Context, tutorID string) ([]TLReport, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []TLReport{}
 	for rows.Next() {
 		var r TLReport
@@ -638,6 +739,9 @@ func (s *Store) ListTLReports(ctx context.Context, tutorID string) ([]TLReport, 
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -656,7 +760,7 @@ func (s *Store) ListTasks(ctx context.Context, tutorID string) ([]Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Task{}
 	for rows.Next() {
 		var tk Task
@@ -666,6 +770,9 @@ func (s *Store) ListTasks(ctx context.Context, tutorID string) ([]Task, error) {
 			return nil, err
 		}
 		out = append(out, tk)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -799,7 +906,7 @@ func (s *Store) ListEligibleUrgentSubLessons(ctx context.Context, tutorID string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Lesson{}
 	for rows.Next() {
 		var l Lesson
@@ -809,6 +916,9 @@ func (s *Store) ListEligibleUrgentSubLessons(ctx context.Context, tutorID string
 			&l.MeetingURL, &l.PrepURL, &l.LMSURL, &done); err == nil {
 			out = append(out, l)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -820,7 +930,7 @@ func (s *Store) ListUrgentSubRequests(ctx context.Context, tutorID string) ([]Ur
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []UrgentSubRequest{}
 	for rows.Next() {
 		var r UrgentSubRequest
@@ -829,6 +939,9 @@ func (s *Store) ListUrgentSubRequests(ctx context.Context, tutorID string) ([]Ur
 			r.ProofURLs = parseJSONSlice(proofs)
 			out = append(out, r)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

@@ -74,7 +74,7 @@
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h2 class="text-xl font-bold text-white">Daftar Siswa & Monitoring Kuota ({students.length})</h2>
-      <p class="text-xs text-slate-400">Filter instan di memori browser (0 ms penantian server — memperbaiki Bug Double-Fetch #4).</p>
+      <p class="text-xs text-slate-400">Pencarian cepat nama siswa, status kuota sesi pelajaran, kehadiran, dan kontak orang tua.</p>
     </div>
 
     <div class="flex items-center gap-2">
@@ -182,7 +182,7 @@
                   Salin
                 </button>
                 <a
-                  href={buildWhatsAppURL(st.parentPhone, `Halo Ayah/Bunda dari ${st.fullName}, salam kenal dari Kak Azhar (Tutor Coding Algonova Indonesia).`)}
+                  href={buildWhatsAppURL(st.parentPhone, `Halo Ayah/Bunda dari ${st.fullName}, salam kenal dari ${app.tutor?.firstName ? 'Kak ' + app.tutor.firstName : 'Tutor'} (Pengajar Algonova Indonesia).`)}
                   target="_blank"
                   rel="noreferrer"
                   class="px-2.5 py-1 rounded-lg bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/35 font-semibold"
@@ -192,6 +192,14 @@
               </td>
             </tr>
           {/each}
+
+          {#if filtered.length === 0}
+            <tr>
+              <td colspan="6" class="py-10 text-center text-xs text-slate-500">
+                Belum ada data siswa terdaftar.
+              </td>
+            </tr>
+          {/if}
         </tbody>
       </table>
     </div>

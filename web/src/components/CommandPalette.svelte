@@ -16,16 +16,15 @@
   });
 
   const quickNav: { key: RouteKey; label: string; desc: string }[] = [
-    { key: 'dashboard', label: 'Dasbor & KPI Saya', desc: '27 Grup aktif, kehadiran & Laporan ke TL' },
+    { key: 'dashboard', label: 'Dasbor & KPI Saya', desc: 'Ringkasan grup aktif, kehadiran & Laporan ke TL' },
     { key: 'taskboard', label: 'Papan Tugas (Kanban)', desc: 'Tugas mingguan, SLA & Pengganti Mendesak' },
-    { key: 'students', label: 'Daftar 55 Siswa', desc: 'Filter kuota kelas <= 3 & kontak WA Ortu' },
-    { key: 'regular-feedback', label: 'Regular Feedback & PDF A4', desc: 'Generator 32 kursus Coding/Design & WA' },
-    { key: 'schedule', label: 'Jadwal, Slot & Reschedule', desc: '217 slot ketersediaan & Reschedule Murid Private' },
-    { key: 'assessment', label: 'Tutor Assessment', desc: 'Siklus aktif & grafik tren 37 siklus' },
+    { key: 'students', label: 'Daftar Siswa', desc: 'Pencarian siswa, kuota kelas & kontak WA Ortu' },
+    { key: 'regular-feedback', label: 'Regular Feedback & PDF A4', desc: 'Generator umpan balik 32 kursus Coding/Design' },
+    { key: 'schedule', label: 'Jadwal, Slot & Reschedule', desc: 'Editor ketersediaan slot & Reschedule Murid Private' },
+    { key: 'assessment', label: 'Tutor Assessment', desc: 'Siklus aktif & grafik tren kompetensi' },
     { key: 'surveys', label: 'Survei Siswa (Renewal)', desc: 'Evaluasi 9 langkah pra-perpanjangan 4 minggu' },
     { key: 'communication', label: 'Bantuan & Inbox Chat', desc: 'Basis Pengetahuan SOP & pesan ke Team Lead' },
-    { key: 'tl-demo', label: 'Mode Demo Team Lead', desc: 'Simulasi persetujuan Reschedule & Laporan TL' },
-    { key: 'benchmark', label: 'Benchmark Pitching Pimpinan', desc: 'Perbandingan kecepatan live vs aplikasi lama' },
+    { key: 'profile', label: 'Profil Pengajar', desc: 'Informasi tutor, ketersediaan, & notifikasi Telegram' },
   ];
 
   $effect(() => {

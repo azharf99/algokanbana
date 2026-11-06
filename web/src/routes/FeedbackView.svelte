@@ -24,7 +24,7 @@
   let saving = $state(false);
 
   // MT Form State
-  let mtStudentName = $state('Kenzie Pratama');
+  let mtStudentName = $state('');
   let mtTopic = $state('');
   let mtUnderstanding = $state(5);
   let mtIndependence = $state(5);

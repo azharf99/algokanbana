@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ func (s *Store) GetRegularFeedbackWeek(ctx context.Context, tutorID, weekStart s
 	if err != nil {
 		return nil, err
 	}
-	defer repRows.Close()
+	defer func() { _ = repRows.Close() }()
 
 	reports := map[string]RegularFeedbackReport{}
 	reportsList := []RegularFeedbackReport{}
@@ -57,6 +58,9 @@ func (s *Store) GetRegularFeedbackWeek(ctx context.Context, tutorID, weekStart s
 			reportsList = append(reportsList, rp)
 		}
 	}
+	if err := repRows.Err(); err != nil {
+		return nil, err
+	}
 
 	// Milestone lessons are every 4th lesson (course_lesson_number % 4 == 0) in the selected week
 	lRows, err := s.db.QueryContext(ctx, `
@@ -69,7 +73,7 @@ func (s *Store) GetRegularFeedbackWeek(ctx context.Context, tutorID, weekStart s
 	if err != nil {
 		return nil, err
 	}
-	defer lRows.Close()
+	defer func() { _ = lRows.Close() }()
 
 	milestones := []Lesson{}
 	for lRows.Next() {
@@ -82,15 +86,22 @@ func (s *Store) GetRegularFeedbackWeek(ctx context.Context, tutorID, weekStart s
 			milestones = append(milestones, l)
 		}
 	}
+	if err := lRows.Err(); err != nil {
+		return nil, err
+	}
 
 	totalTargets := 0
 	filledTargets := 0
 	for i := range milestones {
-		stRows, err := s.db.QueryContext(ctx, `
-			SELECT s.student_id, s.full_name, s.parent_phone
-			FROM students s WHERE s.tutor_id = ? AND s.group_id = ? ORDER BY s.full_name ASC`,
-			tutorID, milestones[i].GroupID)
-		if err == nil {
+		func() {
+			stRows, err := s.db.QueryContext(ctx, `
+				SELECT s.student_id, s.full_name, s.parent_phone
+				FROM students s WHERE s.tutor_id = ? AND s.group_id = ? ORDER BY s.full_name ASC`,
+				tutorID, milestones[i].GroupID)
+			if err != nil {
+				return
+			}
+			defer func() { _ = stRows.Close() }()
 			list := []LessonStudent{}
 			for stRows.Next() {
 				var ls LessonStudent
@@ -105,9 +116,9 @@ func (s *Store) GetRegularFeedbackWeek(ctx context.Context, tutorID, weekStart s
 					list = append(list, ls)
 				}
 			}
-			stRows.Close()
+			_ = stRows.Err()
 			milestones[i].Students = list
-		}
+		}()
 	}
 
 	deadline := time.Date(endT.Year(), endT.Month(), endT.Day()-1, 23, 59, 0, 0, timeutil.JakartaLoc)
@@ -209,7 +220,7 @@ func (s *Store) ListMTFeedback(ctx context.Context, tutorID string) ([]MTFeedbac
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []MTFeedbackEntry{}
 	for rows.Next() {
 		var e MTFeedbackEntry
@@ -220,6 +231,9 @@ func (s *Store) ListMTFeedback(ctx context.Context, tutorID string) ([]MTFeedbac
 			e.IsOnTime = onTime == 1
 			out = append(out, e)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -266,7 +280,7 @@ func (s *Store) GetScheduleBundle(ctx context.Context, tutorID, fromDate, toDate
 	if err != nil {
 		return nil, err
 	}
-	defer lRows.Close()
+	defer func() { _ = lRows.Close() }()
 	lessons := []Lesson{}
 	totalMinutes4W := 0
 	w4End := weekMon.AddDate(0, 0, 28)
@@ -283,12 +297,15 @@ func (s *Store) GetScheduleBundle(ctx context.Context, tutorID, fromDate, toDate
 			}
 		}
 	}
+	if err := lRows.Err(); err != nil {
+		return nil, err
+	}
 
 	aRows, err := s.db.QueryContext(ctx, `SELECT weekday, start_min, status, sheet_cell FROM availability_slots WHERE tutor_id = ? ORDER BY weekday ASC, start_min ASC`, tutorID)
 	if err != nil {
 		return nil, err
 	}
-	defer aRows.Close()
+	defer func() { _ = aRows.Close() }()
 	slots := []AvailabilitySlot{}
 	for aRows.Next() {
 		var sl AvailabilitySlot
@@ -296,14 +313,20 @@ func (s *Store) GetScheduleBundle(ctx context.Context, tutorID, fromDate, toDate
 			slots = append(slots, sl)
 		}
 	}
+	if err := aRows.Err(); err != nil {
+		return nil, err
+	}
 
 	reschedules, _ := s.ListRescheduleRequests(ctx, tutorID)
 	events, _ := s.ListPortalEvents(ctx)
 
 	capacityHours := 160
-	busyHours := max(totalMinutes4W/60, 114) // matches 4-week workload calculation
+	busyHours := totalMinutes4W / 60
 	freeHours := max(capacityHours-busyHours, 0)
-	loadPct := (busyHours * 100) / capacityHours
+	loadPct := 0
+	if capacityHours > 0 {
+		loadPct = (busyHours * 100) / capacityHours
+	}
 
 	return map[string]any{
 		"weekStart": weekMon.Format("2006-01-02"),
@@ -371,7 +394,7 @@ func (s *Store) ListRescheduleRequests(ctx context.Context, tutorID string) ([]R
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []RescheduleRequest{}
 	for rows.Next() {
 		var r RescheduleRequest
@@ -382,6 +405,9 @@ func (s *Store) ListRescheduleRequests(ctx context.Context, tutorID string) ([]R
 			r.ProofURLs = parseJSONSlice(proofs)
 			out = append(out, r)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -519,13 +545,16 @@ func (s *Store) GetAssessmentBundle(ctx context.Context, tutorID string) (map[st
 	if err != nil {
 		return nil, err
 	}
-	defer hRows.Close()
+	defer func() { _ = hRows.Close() }()
 	history := []AssessmentHistoryItem{}
 	for hRows.Next() {
 		var h AssessmentHistoryItem
 		if err := hRows.Scan(&h.ID, &h.CycleCode, &h.CycleLabel, &h.MonthKey, &h.Program, &h.ScorePct, &h.MaxPct, &h.Status, &h.GradedAt); err == nil {
 			history = append(history, h)
 		}
+	}
+	if err := hRows.Err(); err != nil {
+		return nil, err
 	}
 
 	return map[string]any{
@@ -576,13 +605,16 @@ func (s *Store) ListKBArticles(ctx context.Context, category, query string) ([]K
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []KBArticle{}
 	for rows.Next() {
 		var a KBArticle
 		if err := rows.Scan(&a.ArticleID, &a.Category, &a.Locale, &a.Title, &a.Summary, &a.ContentMD, &a.HelpfulCount); err == nil {
 			out = append(out, a)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -596,7 +628,7 @@ func (s *Store) ListThreads(ctx context.Context, tutorID string) ([]Thread, erro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []Thread{}
 	for rows.Next() {
 		var th Thread
@@ -604,6 +636,9 @@ func (s *Store) ListThreads(ctx context.Context, tutorID string) ([]Thread, erro
 			&th.RelatedGroupRef, &th.RelatedStudentRef, &th.UnreadTutor, &th.UnreadTL, &th.Status, &th.UpdatedAt, &th.CreatedAt, &th.LastMessage); err == nil {
 			out = append(out, th)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -624,7 +659,7 @@ func (s *Store) GetThread(ctx context.Context, threadID string) (Thread, error) 
 		SELECT message_id, thread_id, sender_role, sender_name, kind, body, attachment_url, created_at
 		FROM messages WHERE thread_id = ? ORDER BY created_at ASC`, threadID)
 	if err == nil {
-		defer mRows.Close()
+		defer func() { _ = mRows.Close() }()
 		msgs := []Message{}
 		for mRows.Next() {
 			var m Message
@@ -632,6 +667,7 @@ func (s *Store) GetThread(ctx context.Context, threadID string) (Thread, error) 
 				msgs = append(msgs, m)
 			}
 		}
+		_ = mRows.Err()
 		th.Messages = msgs
 	}
 	return th, nil
@@ -761,8 +797,13 @@ func (s *Store) GetTLDemoQueue(ctx context.Context, tutorID string) (map[string]
 			escalatedTasks = append(escalatedTasks, tk)
 		}
 	}
+	tlName := "Team Lead Algonova"
+	var customTL string
+	if err := s.db.QueryRowContext(ctx, `SELECT tl_name FROM tutors WHERE tutor_id = ?`, tutorID).Scan(&customTL); err == nil && customTL != "" {
+		tlName = customTL
+	}
 	return map[string]any{
-		"teamLeadName":       "Devika Wulan Rahmadani",
+		"teamLeadName":       tlName,
 		"tlReports":          reports,
 		"rescheduleRequests": reschedules,
 		"urgentSubRequests":  urgentSubs,
@@ -780,10 +821,6 @@ func (s *Store) GetRoutinesSummary(ctx context.Context, tutorID string) (Routine
 	if fbWeek != nil {
 		total, _ := fbWeek["totalTargets"].(int)
 		filled, _ := fbWeek["filledTargets"].(int)
-		if total == 0 {
-			total = 8
-			filled = 8
-		}
 		pct := 0
 		if total > 0 {
 			pct = (filled * 100) / total
@@ -791,7 +828,11 @@ func (s *Store) GetRoutinesSummary(ctx context.Context, tutorID string) (Routine
 		sum.FeedbackRoutine.Filled = filled
 		sum.FeedbackRoutine.Total = total
 		sum.FeedbackRoutine.Pct = pct
-		sum.FeedbackRoutine.Label = fmt.Sprintf("%d dari %d • %d%%", filled, total, pct)
+		if total > 0 {
+			sum.FeedbackRoutine.Label = fmt.Sprintf("%d dari %d • %d%%", filled, total, pct)
+		} else {
+			sum.FeedbackRoutine.Label = "Belum ada target feedback pekan ini"
+		}
 	}
 
 	// 2. Graduation Routine
@@ -801,12 +842,23 @@ func (s *Store) GetRoutinesSummary(ctx context.Context, tutorID string) (Routine
 	sum.GraduationRoutine.Label = fmt.Sprintf("%d siswa perlu catatan", gradCount)
 
 	// 3. Attendance Routine
-	var avgAtt, lessonsAtt, lessonsTot int
-	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(AVG(attendance_pct), 88), COALESCE(SUM(lessons_attended), 58), COALESCE(SUM(lessons_total), 63) FROM students WHERE tutor_id = ?`, tutorID).Scan(&avgAtt, &lessonsAtt, &lessonsTot)
-	sum.AttendanceRoutine.Pct = avgAtt
-	sum.AttendanceRoutine.Done = lessonsAtt
-	sum.AttendanceRoutine.Total = lessonsTot
-	sum.AttendanceRoutine.Label = fmt.Sprintf("%d%% • %d/%d hadir", avgAtt, lessonsAtt, lessonsTot)
+	var avgAtt sql.NullInt64
+	var lessonsAtt, lessonsTot sql.NullInt64
+	_ = s.db.QueryRowContext(ctx, `SELECT AVG(attendance_pct), SUM(lessons_attended), SUM(lessons_total) FROM students WHERE tutor_id = ?`, tutorID).Scan(&avgAtt, &lessonsAtt, &lessonsTot)
+	if avgAtt.Valid {
+		sum.AttendanceRoutine.Pct = int(avgAtt.Int64)
+	}
+	if lessonsAtt.Valid {
+		sum.AttendanceRoutine.Done = int(lessonsAtt.Int64)
+	}
+	if lessonsTot.Valid {
+		sum.AttendanceRoutine.Total = int(lessonsTot.Int64)
+	}
+	if sum.AttendanceRoutine.Total > 0 {
+		sum.AttendanceRoutine.Label = fmt.Sprintf("%d%% • %d/%d hadir", sum.AttendanceRoutine.Pct, sum.AttendanceRoutine.Done, sum.AttendanceRoutine.Total)
+	} else {
+		sum.AttendanceRoutine.Label = "Belum ada data kehadiran siswa"
+	}
 
 	// 4. Assessment Routine
 	var cycleCode string
@@ -845,7 +897,7 @@ func (s *Store) ListSurveyTargets(ctx context.Context, tutorID string) ([]Survey
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := []SurveyTarget{}
 	for rows.Next() {
@@ -865,6 +917,9 @@ func (s *Store) ListSurveyTargets(ctx context.Context, tutorID string) ([]Survey
 			st.Submission = &sub
 		}
 		out = append(out, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

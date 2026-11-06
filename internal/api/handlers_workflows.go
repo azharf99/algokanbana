@@ -495,7 +495,7 @@ func (s *Server) handleReplyThread(w http.ResponseWriter, r *http.Request) {
 	}
 	senderName := claims.FullName
 	if claims.ActiveRole == "team_lead" {
-		senderName = "Devika Wulan Rahmadani (Team Lead)"
+		senderName = "Team Lead Algonova"
 	}
 	msg, err := s.store.ReplyThread(r.Context(), id, claims.ActiveRole, senderName, "text", body.Body, body.AttachmentURL)
 	if err != nil {
@@ -672,12 +672,12 @@ func (s *Server) handleBenchmark(w http.ResponseWriter, r *http.Request) {
 
 	rows := []map[string]any{
 		{"module": "Jadwal & 217 Slot Ketersediaan", "oldMs": 12175.0, "newMs": schedMs, "speedup": int(12175.0 / schedMs)},
-		{"module": "Dasbor (27 Grup + Kehadiran)", "oldMs": 11834.0, "newMs": dashMs, "speedup": int(11834.0 / dashMs)},
+		{"module": "Dasbor (Grup & Kehadiran)", "oldMs": 11834.0, "newMs": dashMs, "speedup": int(11834.0 / dashMs)},
 		{"module": "Bantuan & Komunikasi (Inbox)", "oldMs": 7505.0, "newMs": commMs, "speedup": int(7505.0 / commMs)},
 		{"module": "Papan Tugas (Taskboard Kanban)", "oldMs": 4569.0, "newMs": taskMs, "speedup": int(4569.0 / taskMs)},
-		{"module": "Tutor Assessment + 37 Riwayat", "oldMs": 4204.0, "newMs": assessMs, "speedup": int(4204.0 / assessMs)},
+		{"module": "Tutor Assessment + Riwayat", "oldMs": 4204.0, "newMs": assessMs, "speedup": int(4204.0 / assessMs)},
 		{"module": "Regular Feedback (32 Kursus)", "oldMs": 4011.0, "newMs": fbMs, "speedup": int(4011.0 / fbMs)},
-		{"module": "Daftar 55 Siswa & Filter Kuota", "oldMs": 3870.0, "newMs": stuMs, "speedup": int(3870.0 / stuMs)},
+		{"module": "Daftar Siswa & Filter Kuota", "oldMs": 3870.0, "newMs": stuMs, "speedup": int(3870.0 / stuMs)},
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

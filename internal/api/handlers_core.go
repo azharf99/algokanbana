@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,9 +11,11 @@ import (
 	"time"
 
 	"algokanbana/internal/auth"
+	"algokanbana/internal/config"
 	"algokanbana/internal/curriculum"
-	"algokanbana/internal/seed"
+	"algokanbana/internal/lms"
 	"algokanbana/internal/store"
+	"algokanbana/internal/timeutil"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,7 +33,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	login := strings.TrimSpace(body.Login)
 	if login == "" {
-		login = "azharfa"
+		writeError(w, http.StatusBadRequest, "username LMS tidak boleh kosong")
+		return
 	}
 	if strings.TrimSpace(body.Password) == "" {
 		writeError(w, http.StatusBadRequest, "password tidak boleh kosong")
@@ -38,22 +42,99 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	authSource := "local_fast"
-	if body.VerifyLMS {
-		if _, err := s.lms.VerifyCredentials(r.Context(), login, body.Password); err != nil {
+	var lmsProfile *lms.UserProfile
+
+	// In production mode or when explicit verification is requested, always verify credentials with upstream LMS!
+	if s.cfg.AppMode == config.ModeProduction || body.VerifyLMS {
+		prof, err := s.lms.VerifyCredentials(r.Context(), login, body.Password)
+		if err != nil {
 			writeError(w, http.StatusUnauthorized, "verifikasi LMS gagal: "+err.Error())
 			return
 		}
-		authSource = "lms_verified_readonly"
+		lmsProfile = &prof
+		authSource = "lms_verified"
 	}
 
 	tutor, err := s.store.GetTutorByLogin(r.Context(), login)
 	if err != nil {
-		// Fall back to default seeded tutor profile so local testing works seamlessly
-		tutor, err = s.store.GetTutorByID(r.Context(), seed.DefaultTutorID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "profil tutor belum terinisialisasi")
+		// If verified with LMS, auto-provision tutor profile into SQLite!
+		if lmsProfile != nil {
+			nowStr := timeutil.FormatWIB(time.Now())
+			fullName := strings.TrimSpace(lmsProfile.FullName)
+			if fullName == "" {
+				fullName = lmsProfile.Login
+			}
+			parts := strings.SplitN(fullName, " ", 2)
+			first := parts[0]
+			last := ""
+			if len(parts) > 1 {
+				last = parts[1]
+			}
+			newTutor := store.Tutor{
+				TutorID:        uuid.NewString(),
+				UserID:         uuid.NewString(),
+				LMSUserID:      lmsProfile.LMSUserID,
+				Login:          lmsProfile.Login,
+				FirstName:      first,
+				LastName:       last,
+				FullName:       fullName,
+				Email:          lmsProfile.EmailMask,
+				Status:         "active",
+				EmploymentType: "part_time",
+				CountryCode:    "ID",
+				CourseTypes:    []string{"coding"},
+				LessonFormats:  []string{"group", "private"},
+				DensityPref:    "default",
+				LocalePref:     "id",
+				AvailableRoles: []string{"tutor"},
+				UpdatedAt:      nowStr,
+			}
+			if err := s.store.UpsertTutor(r.Context(), newTutor); err != nil {
+				writeError(w, http.StatusInternalServerError, "gagal menyimpan profil tutor: "+err.Error())
+				return
+			}
+			tutor = newTutor
+		} else {
+			writeError(w, http.StatusUnauthorized, "akun tidak ditemukan di database")
 			return
 		}
+	} else if lmsProfile != nil {
+		if tutor.LMSUserID == 0 && lmsProfile.LMSUserID != 0 {
+			tutor.LMSUserID = lmsProfile.LMSUserID
+			_ = s.store.UpsertTutor(r.Context(), tutor)
+		}
+	}
+
+	// When LMS profile is verified, automatically sync real tutor groups into SQLite
+	if lmsProfile != nil {
+		go func(tutorID string) {
+			rawGroups, err := s.lms.FetchTutorGroups(context.Background())
+			if err == nil && len(rawGroups) > 0 {
+				var groupsToSync []store.Group
+				for _, rg := range rawGroups {
+					fmtType := "group"
+					if rg.Type == "intensive" {
+						fmtType = "private"
+					}
+					isArch := rg.Status != "active"
+					cCode, cName := parseCourseFromTitle(rg.Title)
+					groupsToSync = append(groupsToSync, store.Group{
+						GroupID:         fmt.Sprintf("%d", rg.ID),
+						TutorID:         tutorID,
+						Title:           rg.Title,
+						CourseCode:      cCode,
+						CourseName:      cName,
+						Format:          fmtType,
+						ScheduleSummary: formatScheduleFromTitle(rg.Title),
+						StartDate:       rg.StartTime,
+						StudentsCount:   1,
+						LMSURL:          fmt.Sprintf("https://lms.algonova.id/group/view/%d", rg.ID),
+						IsArchived:      isArch,
+					})
+				}
+				_ = s.store.SyncTutorGroups(context.Background(), tutorID, groupsToSync)
+			}
+		}(tutor.TutorID)
 	}
 
 	claims := auth.SessionClaims{
@@ -75,6 +156,41 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"session":    claims,
 		"tutor":      tutor,
 	})
+}
+
+func parseCourseFromTitle(title string) (string, string) {
+	upper := strings.ToUpper(title)
+	for _, c := range curriculum.Courses {
+		if strings.Contains(upper, " "+c.Code+" ") || strings.Contains(upper, "("+c.Code) || strings.Contains(upper, " "+c.Code) {
+			return c.Code, c.Name
+		}
+	}
+	if strings.Contains(upper, "PYTHON PRO") || strings.Contains(upper, "PP2") {
+		return "PP2", "Python Pro (Year 2 - AI & Backend)"
+	}
+	if strings.Contains(upper, "ROBLOX") || strings.Contains(upper, "RB") {
+		return "RB2.0", "Roblox Studio 2.0 (Lua Scripting)"
+	}
+	if strings.Contains(upper, "UNITY") || strings.Contains(upper, "GD") {
+		return "GD", "Unity 3D Game Development (C#)"
+	}
+	if strings.Contains(upper, "FRONTEND") || strings.Contains(upper, "FE") {
+		return "FE", "Frontend Development (HTML/CSS/JS/React)"
+	}
+	if strings.Contains(upper, "PYTHON") || strings.Contains(upper, "PS") {
+		return "PS", "Python Start (Year 1)"
+	}
+	return "INT-PRV", "Intensive Private Coding Track (1-on-1)"
+}
+
+func formatScheduleFromTitle(title string) string {
+	if idx := strings.Index(title, "("); idx != -1 {
+		endIdx := strings.Index(title[idx:], ")")
+		if endIdx != -1 {
+			return strings.TrimSpace(title[idx+1 : idx+endIdx])
+		}
+	}
+	return "Sesuai Jadwal LMS"
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

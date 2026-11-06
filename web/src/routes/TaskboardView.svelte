@@ -696,7 +696,7 @@
         bind:value={newTitle}
         required
         minlength="3"
-        placeholder="Judul tugas (mis. Cek project Roblox Bima Sakti)"
+        placeholder="Judul tugas (mis. Cek project siswa atau persiapan modul)"
         class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
       />
       <textarea

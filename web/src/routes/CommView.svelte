@@ -135,7 +135,7 @@
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h2 class="text-xl font-bold text-white">Bantuan, Basis Pengetahuan & Komunikasi</h2>
-      <p class="text-xs text-slate-400">Bebas double-fetch SSR & mendukung input nama siswa/nomor grup fleksibel (Fix Bug #2, #3, #5).</p>
+      <p class="text-xs text-slate-400">Pusat bantuan operasional, SOP pengajaran resmi, dan komunikasi langsung dengan Team Lead.</p>
     </div>
 
     <div class="flex items-center gap-2">

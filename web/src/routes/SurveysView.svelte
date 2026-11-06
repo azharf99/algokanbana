@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { apiFetch, fmtDateTimeWIB, notify } from '../lib/state.svelte';
 
   interface SurveySubmission {
@@ -201,7 +202,7 @@
   const pendingTargets = $derived(targets.filter((t) => t.status === 'pending'));
   const completedTargets = $derived(targets.filter((t) => t.status === 'completed'));
 
-  $effect(() => {
+  onMount(() => {
     loadSurveys();
   });
 </script>

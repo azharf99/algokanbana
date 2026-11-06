@@ -207,19 +207,19 @@
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
     <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
       <div class="text-[11px] uppercase font-semibold text-slate-400">Jam Sibuk (4 Pekan)</div>
-      <div class="mt-1 text-2xl font-black text-white">{schedData?.workload?.busyHours ?? 114}j</div>
+      <div class="mt-1 text-2xl font-black text-white">{schedData?.workload?.busyHours ?? 0}j</div>
     </div>
     <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
       <div class="text-[11px] uppercase font-semibold text-slate-400">Jam Luang Tersedia</div>
-      <div class="mt-1 text-2xl font-black text-emerald-400">{schedData?.workload?.freeHours ?? 46}j</div>
+      <div class="mt-1 text-2xl font-black text-emerald-400">{schedData?.workload?.freeHours ?? 0}j</div>
     </div>
     <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
       <div class="text-[11px] uppercase font-semibold text-slate-400">Beban Kerja Total</div>
-      <div class="mt-1 text-2xl font-black text-indigo-400">{schedData?.workload?.loadPct ?? 71}%</div>
+      <div class="mt-1 text-2xl font-black text-indigo-400">{schedData?.workload?.loadPct ?? 0}%</div>
     </div>
     <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800">
       <div class="text-[11px] uppercase font-semibold text-slate-400">Kapasitas Luang</div>
-      <div class="mt-1 text-2xl font-black text-amber-400">{schedData?.workload?.freePct ?? 29}% <span class="text-xs text-slate-500">/ 160j</span></div>
+      <div class="mt-1 text-2xl font-black text-amber-400">{schedData?.workload?.freePct ?? 0}% <span class="text-xs text-slate-500">/ 160j</span></div>
     </div>
   </div>
 
