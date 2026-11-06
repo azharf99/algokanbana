@@ -79,6 +79,7 @@ func loadDotEnv(path string) {
 	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -94,4 +95,9 @@ func loadDotEnv(path string) {
 			_ = os.Setenv(key, val)
 		}
 	}
+
+	if scanner.Err() != nil {
+		return
+	}
+
 }
