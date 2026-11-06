@@ -1,0 +1,17 @@
+services:
+  algokanbana:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: algokanbana:latest
+    container_name: algokanbana
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env
+    volumes:
+      - algokanbana_data:/data
+
+volumes:
+  algokanbana_data:

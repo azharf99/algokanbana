@@ -1,0 +1,10 @@
+.git
+.env
+data
+*.db
+*.db-shm
+*.db-wal
+*.exe
+algokanbana
+web/node_modules
+web/dist
