@@ -3,11 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: algokanbana:latest
+    image: azharfa/algokanbana:latest
     container_name: algokanbana
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "8083:8080"
     env_file:
       - .env
     volumes:
