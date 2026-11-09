@@ -7,7 +7,8 @@ services:
     container_name: algokanbana
     restart: unless-stopped
     ports:
-      - "8083:8080"
+      # Bind to 127.0.0.1 so the container is only reachable by local Nginx reverse proxy
+      - "127.0.0.1:8083:8080"
     env_file:
       - .env
     volumes:
