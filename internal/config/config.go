@@ -21,8 +21,12 @@ type Config struct {
 	DBPath               string
 	UploadDir            string
 	SessionSecret        string
+	SessionCookieName    string
+	CookieSecure         string // "true" | "false" | "auto"
+	CookieSameSite       string // "Lax" | "Strict" | "None"
 	SafeReadonlyUpstream bool
 	LMSBaseURL           string
+	UpstreamTimeoutMs    int
 }
 
 func Load() Config {
@@ -41,14 +45,28 @@ func Load() Config {
 		safeReadonly = true
 	}
 
+	lmsURL := getEnv("LMS_BASE_URL", "")
+	if lmsURL == "" {
+		lmsURL = getEnv("UPSTREAM_BASE", "https://lms.algonova.id")
+	}
+
+	timeoutMs, err := strconv.Atoi(getEnv("UPSTREAM_TIMEOUT_MS", "30000"))
+	if err != nil || timeoutMs < 5000 {
+		timeoutMs = 30000
+	}
+
 	return Config{
 		AppMode:              mode,
-		Port:                 getEnv("PORT", "8090"),
+		Port:                 getEnv("PORT", "8080"),
 		DBPath:               getEnv("DB_PATH", "./data/algokanbana.db"),
 		UploadDir:            getEnv("UPLOAD_DIR", "./data/uploads"),
 		SessionSecret:        getEnv("SESSION_SECRET", "algokanbana-local-hmac-secret-key-2026"),
+		SessionCookieName:    getEnv("SESSION_COOKIE_NAME", "ak_session"),
+		CookieSecure:         strings.ToLower(getEnv("COOKIE_SECURE", "auto")),
+		CookieSameSite:       getEnv("COOKIE_SAME_SITE", "Lax"),
 		SafeReadonlyUpstream: safeReadonly,
-		LMSBaseURL:           strings.TrimRight(getEnv("LMS_BASE_URL", "https://lms.algonova.id"), "/"),
+		LMSBaseURL:           strings.TrimRight(lmsURL, "/"),
+		UpstreamTimeoutMs:    timeoutMs,
 	}
 }
 

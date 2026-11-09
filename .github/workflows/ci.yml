@@ -8,16 +8,33 @@ on:
 
 jobs:
   test:
-    name: Run Unit Tests
+    name: Run Unit Tests & Lint
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+
+    - name: Build Web Assets
+      run: |
+        cd web
+        npm ci --no-audit --no-fund
+        npm run build
+
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: '1.26'
+        cache: true
+
     - name: Run Tests
       run: go test -v ./...
 
@@ -58,7 +75,7 @@ jobs:
         key: ${{ secrets.VPS_SSH_KEY }}
         timeout: 30s
         source: "docker-compose.yml" # File yang ingin dikirim
-        target: "/opt/algokanbana"    
+        target: "/opt/algokanbana"
 
     # 4. SSH ke VPS untuk eksekusi Pull & Restart
     - name: Deploy to VPS via SSH
@@ -71,12 +88,12 @@ jobs:
         command_timeout: 10m
         script: |
           cd /opt/algokanbana
-          
+
           # Tarik image terbaru dari Docker Hub
           docker compose pull
-          
+
           # Eksekusi docker compose
           docker compose up -d
-          
+
           # Bersihkan image yang tidak terpakai
           docker image prune -f

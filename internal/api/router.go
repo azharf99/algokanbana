@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path"
@@ -39,11 +40,12 @@ type Server struct {
 func NewServer(cfg config.Config, st *store.Store, webFS fs.FS) *Server {
 	_ = os.MkdirAll(cfg.UploadDir, 0o755)
 	sse := NewSSEHub()
+	timeout := time.Duration(cfg.UpstreamTimeoutMs) * time.Millisecond
 	s := &Server{
 		cfg:   cfg,
 		store: st,
-		auth:  auth.NewManager(cfg.SessionSecret),
-		lms:   lms.NewClient(cfg.LMSBaseURL, cfg.SafeReadonlyUpstream),
+		auth:  auth.NewManager(cfg.SessionSecret, cfg.SessionCookieName, cfg.CookieSameSite),
+		lms:   lms.NewClient(cfg.LMSBaseURL, cfg.SafeReadonlyUpstream, timeout),
 		sse:   sse,
 		webFS: webFS,
 	}
@@ -217,12 +219,14 @@ func getClaims(r *http.Request) auth.SessionClaims {
 
 type statusRecorder struct {
 	http.ResponseWriter
+	statusCode  int
 	wroteHeader bool
 	start       time.Time
 }
 
 func (sr *statusRecorder) WriteHeader(code int) {
 	if !sr.wroteHeader {
+		sr.statusCode = code
 		ms := float64(time.Since(sr.start).Microseconds()) / 1000.0
 		sr.Header().Set("X-Response-Time-Ms", fmt.Sprintf("%.2f", ms))
 		sr.wroteHeader = true
@@ -247,8 +251,16 @@ func timingAndSecurityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Access-Control-Expose-Headers", "X-Response-Time-Ms")
-		rec := &statusRecorder{ResponseWriter: w, start: time.Now()}
+		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK, start: time.Now()}
 		next.ServeHTTP(rec, r)
+
+		duration := time.Since(rec.start)
+		ms := float64(duration.Microseconds()) / 1000.0
+		if rec.statusCode >= 400 {
+			log.Printf("[HTTP ERR] %s %s -> %d (%.2f ms)", r.Method, r.URL.Path, rec.statusCode, ms)
+		} else if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/v1/events/stream" {
+			log.Printf("[HTTP] %s %s -> %d (%.2f ms)", r.Method, r.URL.Path, rec.statusCode, ms)
+		}
 	})
 }
 
@@ -291,6 +303,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
+	log.Printf("[API ERR] %d: %s", code, msg)
 	writeJSON(w, code, map[string]any{"ok": false, "error": msg})
 }
 

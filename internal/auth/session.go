@@ -26,11 +26,42 @@ type SessionClaims struct {
 }
 
 type Manager struct {
-	secret []byte
+	secret     []byte
+	cookieName string
+	sameSite   http.SameSite
 }
 
-func NewManager(secret string) *Manager {
-	return &Manager{secret: []byte(secret)}
+func NewManager(secret, cookieName, sameSite string) *Manager {
+	if strings.TrimSpace(cookieName) == "" {
+		cookieName = CookieName
+	}
+	ss := http.SameSiteLaxMode
+	switch strings.ToLower(sameSite) {
+	case "strict":
+		ss = http.SameSiteStrictMode
+	case "none":
+		ss = http.SameSiteNoneMode
+	}
+	return &Manager{
+		secret:     []byte(secret),
+		cookieName: strings.TrimSpace(cookieName),
+		sameSite:   ss,
+	}
+}
+
+func (m *Manager) ResolveSecure(r *http.Request, pref string) bool {
+	switch strings.ToLower(pref) {
+	case "true":
+		// Only set Secure if request is actual HTTPS or forwarded HTTPS.
+		// If tutor is accessing via http://localhost:8083, setting Secure=true will cause
+		// modern browsers to silently drop the cookie.
+		isHTTPS := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+		return isHTTPS
+	case "false":
+		return false
+	default: // "auto"
+		return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	}
 }
 
 func (m *Manager) Sign(claims SessionClaims) (string, error) {
@@ -79,33 +110,50 @@ func (m *Manager) SetCookie(w http.ResponseWriter, claims SessionClaims, secure 
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
+		Name:     m.cookieName,
 		Value:    tok,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: m.sameSite,
 		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
 	})
 	return nil
 }
 
 func (m *Manager) ClearCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	names := []string{m.cookieName}
+	for _, n := range []string{"ak_session", "algokanbana_session"} {
+		if n != m.cookieName {
+			names = append(names, n)
+		}
+	}
+	for _, name := range names {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: m.sameSite,
+			MaxAge:   -1,
+		})
+	}
 }
 
 func (m *Manager) FromRequest(r *http.Request) (SessionClaims, error) {
-	c, err := r.Cookie(CookieName)
-	if err == nil && c.Value != "" {
+	// 1. Try configured cookie name
+	if c, err := r.Cookie(m.cookieName); err == nil && c.Value != "" {
 		return m.Verify(c.Value)
 	}
+	// 2. Fallback to alternative cookie names
+	for _, name := range []string{"ak_session", "algokanbana_session"} {
+		if name != m.cookieName {
+			if c, err := r.Cookie(name); err == nil && c.Value != "" {
+				return m.Verify(c.Value)
+			}
+		}
+	}
+	// 3. Try Authorization Bearer header
 	if authz := r.Header.Get("Authorization"); strings.HasPrefix(authz, "Bearer ") {
 		return m.Verify(strings.TrimPrefix(authz, "Bearer "))
 	}

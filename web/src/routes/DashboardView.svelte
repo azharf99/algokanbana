@@ -87,6 +87,17 @@
   });
 
   $effect(() => {
+    const handleSSE = (e: any) => {
+      if (e.detail?.event === 'sync_completed' || e.detail?.event === 'tl_report_created') {
+        loadGroups();
+        if (activeTab === 'kpi') loadKpi();
+      }
+    };
+    window.addEventListener('ak-sse', handleSSE);
+    return () => window.removeEventListener('ak-sse', handleSSE);
+  });
+
+  $effect(() => {
     if (activeTab === 'kpi') {
       loadKpi();
     }

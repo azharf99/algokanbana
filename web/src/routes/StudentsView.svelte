@@ -46,6 +46,16 @@
     }
   });
 
+  $effect(() => {
+    const handleSSE = (e: any) => {
+      if (e.detail?.event === 'sync_completed') {
+        loadStudents();
+      }
+    };
+    window.addEventListener('ak-sse', handleSSE);
+    return () => window.removeEventListener('ak-sse', handleSSE);
+  });
+
   const coursesList = $derived.by(() => {
     const s = new Set<string>();
     students.forEach((st) => s.add(st.courseCode));

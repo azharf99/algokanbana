@@ -1,9 +1,10 @@
 # Binaries & build artifacts
 algokanbana
 algokanbana.exe
-dist/
-web/dist/
-web/node_modules/
+/dist/
+/web/dist/*
+!/web/dist/.keep
+/web/node_modules/
 
 # Local runtime data & env
 data/

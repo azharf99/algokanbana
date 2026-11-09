@@ -23,12 +23,12 @@ COPY --from=go-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=go-builder /out/data /data
 COPY --from=go-builder /out/algokanbana /algokanbana
 
-ENV PORT=8090 \
+ENV PORT=8080 \
     APP_MODE=hybrid_safe \
     DB_PATH=/data/algokanbana.db \
     UPLOAD_DIR=/data/uploads \
     SAFE_READONLY_UPSTREAM=true
 
 VOLUME ["/data"]
-EXPOSE 8090
+EXPOSE 8080
 ENTRYPOINT ["/algokanbana"]

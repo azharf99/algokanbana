@@ -128,6 +128,7 @@ export function connectSSE() {
     try {
       const payload = JSON.parse(ev.data);
       if (payload.event && payload.event !== 'connected') {
+        app.cache = {};
         refreshBootstrap().catch(() => {});
         window.dispatchEvent(new CustomEvent('ak-sse', { detail: payload }));
       }

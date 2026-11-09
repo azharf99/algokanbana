@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -105,36 +107,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// When LMS profile is verified, automatically sync real tutor groups into SQLite
+	// When LMS profile is verified, automatically sync real tutor data into SQLite
 	if lmsProfile != nil {
-		go func(tutorID string) {
-			rawGroups, err := s.lms.FetchTutorGroups(context.Background())
-			if err == nil && len(rawGroups) > 0 {
-				var groupsToSync []store.Group
-				for _, rg := range rawGroups {
-					fmtType := "group"
-					if rg.Type == "intensive" {
-						fmtType = "private"
-					}
-					isArch := rg.Status != "active"
-					cCode, cName := parseCourseFromTitle(rg.Title)
-					groupsToSync = append(groupsToSync, store.Group{
-						GroupID:         fmt.Sprintf("%d", rg.ID),
-						TutorID:         tutorID,
-						Title:           rg.Title,
-						CourseCode:      cCode,
-						CourseName:      cName,
-						Format:          fmtType,
-						ScheduleSummary: formatScheduleFromTitle(rg.Title),
-						StartDate:       rg.StartTime,
-						StudentsCount:   1,
-						LMSURL:          fmt.Sprintf("https://lms.algonova.id/group/view/%d", rg.ID),
-						IsArchived:      isArch,
-					})
-				}
-				_ = s.store.SyncTutorGroups(context.Background(), tutorID, groupsToSync)
-			}
-		}(tutor.TutorID)
+		s.performLMSSync(r.Context(), tutor.TutorID, tutor.Login, true)
 	}
 
 	claims := auth.SessionClaims{
@@ -146,7 +121,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		ActiveRole:     "tutor",
 		AvailableRoles: tutor.AvailableRoles,
 	}
-	if err := s.auth.SetCookie(w, claims, r.TLS != nil); err != nil {
+	isSecure := s.auth.ResolveSecure(r, s.cfg.CookieSecure)
+	if err := s.auth.SetCookie(w, claims, isSecure); err != nil {
 		writeError(w, http.StatusInternalServerError, "gagal membuat sesi")
 		return
 	}
@@ -227,7 +203,8 @@ func (s *Server) handleSwitchRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims.ActiveRole = body.Role
-	if err := s.auth.SetCookie(w, claims, r.TLS != nil); err != nil {
+	isSecure := s.auth.ResolveSecure(r, s.cfg.CookieSecure)
+	if err := s.auth.SetCookie(w, claims, isSecure); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -269,8 +246,13 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
-	st := s.syncEng.TriggerSync(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sync": st})
+	claims := getClaims(r)
+	s.performLMSSync(r.Context(), claims.TutorID, claims.Login, false)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"sync":    s.syncEng.GetStatus(),
+		"message": "Sinkronisasi LMS dimulai di latar belakang",
+	})
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -480,4 +462,324 @@ func (s *Server) handleStudentDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, data)
+}
+
+func (s *Server) performLMSSync(ctx context.Context, tutorID, login string, syncPhase1Sync bool) {
+	if syncPhase1Sync {
+		p1Ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		groups, err := s.syncLMSPhase1(p1Ctx, tutorID, login)
+		if err == nil && len(groups) > 0 {
+			go func() {
+				p2Ctx, p2Cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer p2Cancel()
+				s.syncLMSPhase2(p2Ctx, tutorID, login, groups)
+			}()
+		}
+	} else {
+		go func() {
+			p1Ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			groups, err := s.syncLMSPhase1(p1Ctx, tutorID, login)
+			if err == nil && len(groups) > 0 {
+				p2Ctx, p2Cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer p2Cancel()
+				s.syncLMSPhase2(p2Ctx, tutorID, login, groups)
+			}
+		}()
+	}
+}
+
+func (s *Server) syncLMSPhase1(ctx context.Context, tutorID, login string) ([]store.Group, error) {
+	log.Printf("[LMS-SYNC] Starting Phase 1 sync for tutor %s (%s)...", tutorID, login)
+
+	dashGroups, errDash := s.lms.FetchTeacherDashboardGroups(ctx)
+	if errDash != nil {
+		log.Printf("[LMS-SYNC WARN] FetchTeacherDashboardGroups: %v", errDash)
+	}
+	rawGroups, errGroups := s.lms.FetchTutorGroups(ctx)
+	if errGroups != nil {
+		log.Printf("[LMS-SYNC WARN] FetchTutorGroups: %v", errGroups)
+	}
+
+	if errDash != nil && errGroups != nil {
+		log.Printf("[LMS-SYNC ERR] Both LMS group endpoints failed for tutor %s", tutorID)
+		return nil, fmt.Errorf("both LMS group endpoints failed")
+	}
+
+	dashMap := make(map[int64]lms.RawTeacherDashboardGroup, len(dashGroups))
+	for _, dg := range dashGroups {
+		dashMap[dg.ID] = dg
+	}
+
+	groupMap := make(map[string]store.Group)
+	var upcomingLessons []store.Lesson
+
+	for _, rg := range rawGroups {
+		fmtType := "group"
+		if rg.Type == "intensive" {
+			fmtType = "private"
+		}
+		isArch := rg.Status != "active"
+		cCode, cName := parseCourseFromTitle(rg.Title)
+		gid := fmt.Sprintf("%d", rg.ID)
+		stCount := 1
+		avgAtt := 0
+		avgProg := 0
+
+		if dg, ok := dashMap[rg.ID]; ok {
+			stCount = dg.ActiveStudentsCount
+			if len(dg.LessonStats) > 0 {
+				var totalAttRatio, totalProg float64
+				var statCount int
+				for _, st := range dg.LessonStats {
+					if st.ActiveStudentsCount > 0 {
+						totalAttRatio += float64(st.AttendedStudentsCount) / float64(st.ActiveStudentsCount)
+					}
+					totalProg += st.RegularTaskPercent
+					statCount++
+				}
+				if statCount > 0 {
+					avgAtt = int(math.Round((totalAttRatio / float64(statCount)) * 100))
+					avgProg = int(math.Round(totalProg / float64(statCount)))
+				}
+			}
+			if dg.NextGroupLesson != nil && dg.NextGroupLesson.StartTime != "" {
+				stTime, err := timeutil.ParseLMSMoscowTime(dg.NextGroupLesson.StartTime)
+				if err == nil {
+					dur := 60
+					if fmtType == "private" {
+						dur = 50
+					}
+					stStr := timeutil.FormatWIB(stTime)
+					endStr := timeutil.FormatWIB(stTime.Add(time.Duration(dur) * time.Minute))
+					upcomingLessons = append(upcomingLessons, store.Lesson{
+						LessonID:           fmt.Sprintf("dash_%d_%d", dg.ID, dg.NextGroupLesson.LessonID),
+						TutorID:            tutorID,
+						GroupID:            gid,
+						GroupTitle:         rg.Title,
+						CourseCode:         cCode,
+						Format:             fmtType,
+						LessonTitle:        dg.NextGroupLesson.LessonTitle,
+						LessonNumber:       dg.NextGroupLesson.LessonPosition,
+						CourseLessonNumber: dg.NextGroupLesson.LessonPosition,
+						StartsAt:           stStr,
+						EndsAt:             endStr,
+						DurationMinutes:    dur,
+						MeetingURL:         "",
+						PrepURL:            "",
+						LMSURL:             fmt.Sprintf("https://lms.algonova.id/group/view/%d", rg.ID),
+						IsCompleted:        false,
+					})
+				}
+			}
+		}
+
+		groupMap[gid] = store.Group{
+			GroupID:          gid,
+			TutorID:          tutorID,
+			Title:            rg.Title,
+			CourseCode:       cCode,
+			CourseName:       cName,
+			Format:           fmtType,
+			ScheduleSummary:  formatScheduleFromTitle(rg.Title),
+			StartDate:        rg.StartTime,
+			StudentsCount:    stCount,
+			AvgAttendancePct: avgAtt,
+			AvgProgressPct:   avgProg,
+			LMSURL:           fmt.Sprintf("https://lms.algonova.id/group/view/%d", rg.ID),
+			IsArchived:       isArch,
+		}
+	}
+
+	for _, dg := range dashGroups {
+		gid := fmt.Sprintf("%d", dg.ID)
+		if _, exists := groupMap[gid]; !exists {
+			cCode, cName := parseCourseFromTitle(dg.GroupTitle)
+			fmtType := "group"
+			if strings.Contains(strings.ToLower(dg.GroupTitle), "intensive") || strings.Contains(strings.ToLower(dg.GroupTitle), "private") {
+				fmtType = "private"
+			}
+			groupMap[gid] = store.Group{
+				GroupID:          gid,
+				TutorID:          tutorID,
+				Title:            dg.GroupTitle,
+				CourseCode:       cCode,
+				CourseName:       cName,
+				Format:           fmtType,
+				ScheduleSummary:  formatScheduleFromTitle(dg.GroupTitle),
+				StartDate:        "",
+				StudentsCount:    dg.ActiveStudentsCount,
+				AvgAttendancePct: 0,
+				AvgProgressPct:   0,
+				LMSURL:           fmt.Sprintf("https://lms.algonova.id/group/view/%d", dg.ID),
+				IsArchived:       false,
+			}
+		}
+	}
+
+	var groupsToSync []store.Group
+	for _, g := range groupMap {
+		groupsToSync = append(groupsToSync, g)
+	}
+
+	if err := s.store.SyncTutorGroups(ctx, tutorID, groupsToSync); err != nil {
+		log.Printf("[LMS-SYNC ERR] SyncTutorGroups failed: %v", err)
+	} else {
+		log.Printf("[LMS-SYNC] Phase 1: Synced %d groups into SQLite", len(groupsToSync))
+	}
+
+	if len(upcomingLessons) > 0 {
+		if err := s.store.SyncGroupLessons(ctx, tutorID, upcomingLessons); err != nil {
+			log.Printf("[LMS-SYNC ERR] Sync upcoming lessons failed: %v", err)
+		} else {
+			log.Printf("[LMS-SYNC] Phase 1: Synced %d upcoming lessons into SQLite", len(upcomingLessons))
+		}
+	}
+
+	if err := s.store.SyncWeeklyRoutineTasks(ctx, tutorID); err != nil {
+		log.Printf("[LMS-SYNC ERR] SyncWeeklyRoutineTasks failed: %v", err)
+	}
+
+	return groupsToSync, nil
+}
+
+func (s *Server) syncLMSPhase2(ctx context.Context, tutorID, login string, groups []store.Group) {
+	start := time.Now()
+	log.Printf("[LMS-SYNC] Starting Phase 2 sync (students, lessons, slots) for tutor %s...", tutorID)
+
+	var totalStudents, totalLessons int
+	for _, g := range groups {
+		if g.IsArchived {
+			continue
+		}
+		var gidInt int64
+		_, err := fmt.Sscanf(g.GroupID, "%d", &gidInt)
+		if err != nil || gidInt <= 0 {
+			continue
+		}
+
+		time.Sleep(50 * time.Millisecond)
+
+		// 1. Fetch Students
+		rawStudents, err := s.lms.FetchGroupStudents(ctx, gidInt)
+		if err != nil {
+			log.Printf("[LMS-SYNC WARN] FetchGroupStudents for group %s failed: %v", g.GroupID, err)
+		} else if len(rawStudents) > 0 {
+			var studentsToSync []store.Student
+			for _, rs := range rawStudents {
+				rem := 0
+				if rs.Wallet != nil {
+					rem = rs.Wallet.Credits
+				}
+				if rem <= 0 {
+					for _, ag := range rs.ActiveGroups {
+						if ag.ID == gidInt && ag.GroupWallet != nil {
+							rem = ag.GroupWallet.Credits
+							break
+						}
+					}
+				}
+				if rem < 0 {
+					rem = 0
+				}
+
+				pName := strings.TrimSpace(rs.ParentName)
+				if pName == "" {
+					pName = "Orang Tua " + rs.FullName
+				}
+
+				studentsToSync = append(studentsToSync, store.Student{
+					StudentID:             fmt.Sprintf("%d", rs.ID),
+					TutorID:               tutorID,
+					FullName:              rs.FullName,
+					GroupID:               g.GroupID,
+					GroupTitle:            g.Title,
+					GroupFormat:           g.Format,
+					CourseCode:            g.CourseCode,
+					CourseName:            g.CourseName,
+					AttendancePct:         g.AvgAttendancePct,
+					ProgressPct:           g.AvgProgressPct,
+					LessonsAttended:       0,
+					LessonsTotal:          32,
+					LessonsRemaining:      rem,
+					TotalLessonsPurchased: rem + 8,
+					LastLessonAt:          "",
+					ParentName:            pName,
+					ParentPhone:           rs.Phone,
+					LMSURL:                fmt.Sprintf("https://lms.algonova.id/group/student/view/%d", rs.ID),
+					DiagnosticPct:         85,
+					DiagnosticGoal:        "Pengembangan Coding",
+				})
+			}
+			if err := s.store.SyncGroupStudents(ctx, tutorID, studentsToSync); err != nil {
+				log.Printf("[LMS-SYNC ERR] SyncGroupStudents group %s failed: %v", g.GroupID, err)
+			} else {
+				totalStudents += len(studentsToSync)
+			}
+		}
+
+		time.Sleep(50 * time.Millisecond)
+
+		// 2. Fetch Lessons
+		rawLessons, err := s.lms.FetchGroupLessons(ctx, gidInt)
+		if err != nil {
+			log.Printf("[LMS-SYNC WARN] FetchGroupLessons for group %s failed: %v", g.GroupID, err)
+		} else if len(rawLessons) > 0 {
+			var lessonsToSync []store.Lesson
+			dur := 60
+			if g.Format == "private" {
+				dur = 50
+			}
+			for _, rl := range rawLessons {
+				stTime, err := timeutil.ParseLMSMoscowTime(rl.StartTime)
+				var stStr, endStr string
+				if err == nil {
+					stStr = timeutil.FormatWIB(stTime)
+					endStr = timeutil.FormatWIB(stTime.Add(time.Duration(dur) * time.Minute))
+				} else {
+					stStr = rl.StartTime
+					endStr = rl.StartTime
+				}
+				isComp := rl.Status == 2 || rl.FinishedAt != ""
+				lessonsToSync = append(lessonsToSync, store.Lesson{
+					LessonID:           fmt.Sprintf("%d", rl.ID),
+					TutorID:            tutorID,
+					GroupID:            g.GroupID,
+					GroupTitle:         g.Title,
+					CourseCode:         g.CourseCode,
+					Format:             g.Format,
+					LessonTitle:        rl.Title,
+					LessonNumber:       rl.Number,
+					CourseLessonNumber: rl.Number,
+					StartsAt:           stStr,
+					EndsAt:             endStr,
+					DurationMinutes:    dur,
+					MeetingURL:         "",
+					PrepURL:            "",
+					LMSURL:             fmt.Sprintf("https://lms.algonova.id/group/lesson/view/%d", rl.ID),
+					IsCompleted:        isComp,
+				})
+			}
+			if err := s.store.SyncGroupLessons(ctx, tutorID, lessonsToSync); err != nil {
+				log.Printf("[LMS-SYNC ERR] SyncGroupLessons group %s failed: %v", g.GroupID, err)
+			} else {
+				totalLessons += len(lessonsToSync)
+			}
+		}
+	}
+
+	durTotal := time.Since(start)
+	syncSnap := s.syncEng.RecordSyncSuccess(durTotal)
+	log.Printf("[LMS-SYNC] Full sync completed for tutor %s: %d groups, %d students, %d lessons in %v",
+		tutorID, len(groups), totalStudents, totalLessons, durTotal)
+
+	s.sse.Broadcast("sync_completed", map[string]any{
+		"ok":             true,
+		"tutorId":        tutorID,
+		"groupsCount":    len(groups),
+		"syncedStudents": totalStudents,
+		"syncedLessons":  totalLessons,
+		"sync":           syncSnap,
+	})
 }

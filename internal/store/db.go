@@ -195,6 +195,9 @@ func (s *Store) SyncTutorGroups(ctx context.Context, tutorID string, groups []Gr
 			format = excluded.format,
 			schedule_summary = excluded.schedule_summary,
 			start_date = excluded.start_date,
+			students_count = excluded.students_count,
+			avg_attendance_pct = excluded.avg_attendance_pct,
+			avg_progress_pct = excluded.avg_progress_pct,
 			lms_url = excluded.lms_url,
 			is_archived = excluded.is_archived`)
 	if err != nil {
@@ -216,6 +219,235 @@ func (s *Store) SyncTutorGroups(ctx context.Context, tutorID string, groups []Gr
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *Store) SyncGroupStudents(ctx context.Context, tutorID string, students []Student) error {
+	if len(students) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO students (
+			student_id, tutor_id, full_name, group_id, group_title, group_format,
+			course_code, course_name, attendance_pct, progress_pct, lessons_attended,
+			lessons_total, lessons_remaining, total_lessons_purchased, last_lesson_at,
+			parent_name, parent_phone, lms_url, diagnostic_pct, diagnostic_goal
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(student_id) DO UPDATE SET
+			tutor_id = excluded.tutor_id,
+			full_name = excluded.full_name,
+			group_id = excluded.group_id,
+			group_title = excluded.group_title,
+			group_format = excluded.group_format,
+			course_code = excluded.course_code,
+			course_name = excluded.course_name,
+			attendance_pct = excluded.attendance_pct,
+			progress_pct = excluded.progress_pct,
+			lessons_attended = excluded.lessons_attended,
+			lessons_total = excluded.lessons_total,
+			lessons_remaining = excluded.lessons_remaining,
+			total_lessons_purchased = excluded.total_lessons_purchased,
+			last_lesson_at = excluded.last_lesson_at,
+			parent_name = excluded.parent_name,
+			parent_phone = excluded.parent_phone,
+			lms_url = excluded.lms_url`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stmt.Close() }()
+
+	survStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO survey_targets (
+			survey_id, tutor_id, student_id, student_name, group_title,
+			course_name, lessons_remaining, deadline_at, status, created_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(survey_id) DO NOTHING`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = survStmt.Close() }()
+
+	now := time.Now()
+	nowStr := timeutil.FormatWIB(now)
+	nextSunday := timeutil.MondayOfWeekWIB(now).AddDate(0, 0, 6)
+	deadlineStr := time.Date(nextSunday.Year(), nextSunday.Month(), nextSunday.Day(), 23, 59, 0, 0, timeutil.JakartaLoc).Format(time.RFC3339)
+
+	for _, st := range students {
+		if _, err := stmt.ExecContext(ctx,
+			st.StudentID, tutorID, st.FullName, st.GroupID, st.GroupTitle, st.GroupFormat,
+			st.CourseCode, st.CourseName, st.AttendancePct, st.ProgressPct, st.LessonsAttended,
+			st.LessonsTotal, st.LessonsRemaining, st.TotalLessonsPurchased, st.LastLessonAt,
+			st.ParentName, st.ParentPhone, st.LMSURL, st.DiagnosticPct, st.DiagnosticGoal,
+		); err != nil {
+			return err
+		}
+
+		if st.LessonsRemaining >= 1 && st.LessonsRemaining <= 4 {
+			surveyID := fmt.Sprintf("surv_%s_%s", tutorID, st.StudentID)
+			_, _ = survStmt.ExecContext(ctx,
+				surveyID, tutorID, st.StudentID, st.FullName, st.GroupTitle,
+				st.CourseName, st.LessonsRemaining, deadlineStr, "pending", nowStr,
+			)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) SyncGroupLessons(ctx context.Context, tutorID string, lessons []Lesson) error {
+	if len(lessons) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO lessons (
+			lesson_id, tutor_id, group_id, group_title, course_code, format,
+			lesson_title, lesson_number, course_lesson_number, starts_at, ends_at,
+			duration_minutes, meeting_url, prep_url, lms_url, is_completed
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(lesson_id) DO UPDATE SET
+			tutor_id = excluded.tutor_id,
+			group_id = excluded.group_id,
+			group_title = excluded.group_title,
+			course_code = excluded.course_code,
+			format = excluded.format,
+			lesson_title = excluded.lesson_title,
+			lesson_number = excluded.lesson_number,
+			course_lesson_number = excluded.course_lesson_number,
+			starts_at = excluded.starts_at,
+			ends_at = excluded.ends_at,
+			duration_minutes = excluded.duration_minutes,
+			lms_url = excluded.lms_url,
+			is_completed = excluded.is_completed`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, l := range lessons {
+		done := 0
+		if l.IsCompleted {
+			done = 1
+		}
+		if _, err := stmt.ExecContext(ctx,
+			l.LessonID, tutorID, l.GroupID, l.GroupTitle, l.CourseCode, l.Format,
+			l.LessonTitle, l.LessonNumber, l.CourseLessonNumber, l.StartsAt, l.EndsAt,
+			l.DurationMinutes, l.MeetingURL, l.PrepURL, l.LMSURL, done,
+		); err != nil {
+			return err
+		}
+	}
+
+	s.ensureAvailabilitySlotsLocked(ctx, tx, tutorID, lessons)
+
+	return tx.Commit()
+}
+
+func (s *Store) ensureAvailabilitySlotsLocked(ctx context.Context, tx *sql.Tx, tutorID string, lessons []Lesson) {
+	var slotCount int
+	_ = tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM availability_slots WHERE tutor_id = ?`, tutorID).Scan(&slotCount)
+
+	now := time.Now()
+	nowStr := timeutil.FormatWIB(now)
+
+	bookedLookup := make(map[string]string)
+	for _, l := range lessons {
+		st, err := time.Parse(time.RFC3339, l.StartsAt)
+		if err != nil {
+			continue
+		}
+		wday := int(st.Weekday())
+		if wday == 0 {
+			wday = 6 // Sunday
+		} else {
+			wday -= 1
+		}
+		startMin := st.Hour()*60 + st.Minute()
+		startMin = (startMin / 30) * 30
+		bStatus := "booked"
+		if l.Format == "group" {
+			bStatus = "booked_for_group"
+		}
+		dur := l.DurationMinutes
+		if dur <= 0 {
+			dur = 60
+		}
+		for m := 0; m < dur; m += 30 {
+			bookedLookup[fmt.Sprintf("%d:%d", wday, startMin+m)] = bStatus
+		}
+	}
+
+	if slotCount < 217 {
+		cellRow := 13
+		for d := 0; d < 7; d++ {
+			for idx := 0; idx < 31; idx++ {
+				startMin := 450 + idx*30 // 07:30 .. 22:30
+				status := "available"
+				if startMin < 540 && d < 5 {
+					status = "not_available"
+				} else if d >= 5 && startMin >= 1200 {
+					status = "avail_for_group"
+				}
+				if bk, ok := bookedLookup[fmt.Sprintf("%d:%d", d, startMin)]; ok {
+					status = bk
+				}
+				_, _ = tx.ExecContext(ctx, `
+					INSERT INTO availability_slots (tutor_id, weekday, start_min, status, sheet_cell, updated_at)
+					VALUES (?,?,?,?,?,?)
+					ON CONFLICT(tutor_id, weekday, start_min) DO UPDATE SET
+						status = excluded.status,
+						updated_at = excluded.updated_at`,
+					tutorID, d, startMin, status, fmt.Sprintf("AS%d", cellRow), nowStr)
+				cellRow++
+			}
+		}
+	} else {
+		for key, bStatus := range bookedLookup {
+			var wday, startMin int
+			_, _ = fmt.Sscanf(key, "%d:%d", &wday, &startMin)
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE availability_slots SET status = ?, updated_at = ?
+				WHERE tutor_id = ? AND weekday = ? AND start_min = ? AND status != ?`,
+				bStatus, nowStr, tutorID, wday, startMin, bStatus)
+		}
+	}
+}
+
+func (s *Store) SyncWeeklyRoutineTasks(ctx context.Context, tutorID string) error {
+	now := time.Now()
+	mon := timeutil.MondayOfWeekWIB(now)
+	sun := mon.AddDate(0, 0, 6)
+	nextMon := mon.AddDate(0, 0, 7)
+
+	weekLabel := fmt.Sprintf("%02d.%02d–%02d.%02d", mon.Day(), mon.Month(), sun.Day(), sun.Month())
+	weekStart := mon.Format("2006-01-02")
+	assignedAt := timeutil.FormatWIB(mon)
+	dueAt := time.Date(nextMon.Year(), nextMon.Month(), nextMon.Day(), 23, 59, 0, 0, timeutil.JakartaLoc).Format(time.RFC3339)
+
+	t1ID := fmt.Sprintf("task_att_%s_%s", tutorID, weekStart)
+	t2ID := fmt.Sprintf("task_surv_%s_%s", tutorID, weekStart)
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO tasks (
+			task_id, tutor_id, title, description, task_type, status,
+			priority, due_at, assigned_at, metric_code, week_start
+		) VALUES
+		(?, ?, ?, 'Periksa dan lengkapi presensi kehadiran seluruh grup siswa pekan ini di LMS.', 'routine', 'assigned', 'high', ?, ?, 'attendance', ?),
+		(?, ?, ?, 'Isi survei 9-langkah untuk siswa yang memiliki saldo 1-4 pelajaran tersisa.', 'survey', 'assigned', 'medium', ?, ?, 'renewal', ?)
+		ON CONFLICT(task_id) DO NOTHING`,
+		t1ID, tutorID, "PERIKSA KEHADIRAN DI GRUP · "+weekLabel, dueAt, assignedAt, weekStart,
+		t2ID, tutorID, "ISI KARTU SISWA UNTUK YANG AKAN SEGERA PERPANJANG · "+weekLabel, dueAt, assignedAt, weekStart)
+	return err
 }
 
 type UpdateProfileInput struct {
